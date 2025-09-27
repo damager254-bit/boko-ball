@@ -1,0 +1,344 @@
+/* AnimatorApp.jsx
+   Single-file React component for a lightweight 2D frame-by-frame animator.
+
+   Dependencies (optional):
+     - tailwindcss (component uses Tailwind for styling)
+     - gif.js.optimized (for GIF export) -> npm i gif.js.optimized
+
+   Drop this file into a React project (Create React App or Vite).
+*/
+
+import React, { useRef, useState, useEffect } from "react";
+// If you want file saving utilities uncomment and install file-saver
+// import { saveAs } from 'file-saver';
+
+export default function AnimatorApp() {
+  // Canvas and drawing state
+  const canvasRef = useRef(null);
+  const ctxRef = useRef(null);
+  const drawing = useRef(false);
+  const [brushSize, setBrushSize] = useState(4);
+  const [brushColor, setBrushColor] = useState('#000000');
+  const [frames, setFrames] = useState([]); // array of dataURLs
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [onionSkin, setOnionSkin] = useState(true);
+  const [fps, setFps] = useState(12);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef(null);
+  const [canvasWidth, setCanvasWidth] = useState(640);
+  const [canvasHeight, setCanvasHeight] = useState(360);
+
+  // initialize canvas context
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctxRef.current = ctx;
+
+    if (frames[currentFrame]) {
+      loadFrameToCanvas(frames[currentFrame]);
+    } else {
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0, canvas.width, canvas.height);
+    }
+  }, [canvasWidth, canvasHeight]);
+
+  // whenever currentFrame changes, load it
+  useEffect(() => {
+    if (frames[currentFrame]) {
+      loadFrameToCanvas(frames[currentFrame]);
+    } else {
+      ctxRef.current.clearRect(0,0, canvasWidth, canvasHeight);
+      ctxRef.current.fillStyle = '#ffffff';
+      ctxRef.current.fillRect(0,0, canvasWidth, canvasHeight);
+      if (onionSkin && frames[currentFrame - 1]) {
+        renderOnionSkin(frames[currentFrame - 1]);
+      }
+    }
+  }, [currentFrame, frames]);
+
+  useEffect(() => {
+    // play loop
+    if (!playing) {
+      if (playRef.current) {
+        clearInterval(playRef.current);
+        playRef.current = null;
+      }
+      return;
+    }
+    const interval = 1000 / Math.max(1, fps);
+    playRef.current = setInterval(() => {
+      setCurrentFrame(prev => (prev + 1) % Math.max(1, frames.length));
+    }, interval);
+    return () => clearInterval(playRef.current);
+  }, [playing, fps, frames.length]);
+
+  function startDrawing(e) {
+    drawing.current = true;
+    const pos = getPointerPos(e);
+    ctxRef.current.beginPath();
+    ctxRef.current.moveTo(pos.x, pos.y);
+  }
+
+  function stopDrawing() {
+    if (!drawing.current) return;
+    drawing.current = false;
+    ctxRef.current.closePath();
+  }
+
+  function draw(e) {
+    if (!drawing.current) return;
+    const pos = getPointerPos(e);
+    ctxRef.current.lineWidth = brushSize;
+    ctxRef.current.strokeStyle = brushColor;
+    ctxRef.current.lineTo(pos.x, pos.y);
+    ctxRef.current.stroke();
+  }
+
+  function getPointerPos(e) {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * (canvasRef.current.width / rect.width),
+      y: (clientY - rect.top) * (canvasRef.current.height / rect.height)
+    };
+  }
+
+  function saveCurrentFrame() {
+    const data = canvasRef.current.toDataURL('image/png');
+    setFrames(prev => {
+      const copy = [...prev];
+      copy[currentFrame] = data;
+      return copy;
+    });
+  }
+
+  function addFrame(afterIndex = null) {
+    // insert a blank frame afterIndex (or at end if null)
+    setFrames(prev => {
+      const newFrame = blankFrameDataURL(canvasWidth, canvasHeight);
+      if (afterIndex === null) {
+        return [...prev, newFrame];
+      } else {
+        const copy = [...prev];
+        copy.splice(afterIndex + 1, 0, newFrame);
+        return copy;
+      }
+    });
+    setCurrentFrame(prev => (afterIndex === null ? frames.length : afterIndex + 1));
+  }
+
+  function duplicateFrame(index) {
+    setFrames(prev => {
+      const copy = [...prev];
+      const toCopy = copy[index] || blankFrameDataURL(canvasWidth, canvasHeight);
+      copy.splice(index + 1, 0, toCopy);
+      return copy;
+    });
+    setCurrentFrame(index + 1);
+  }
+
+  function deleteFrame(index) {
+    setFrames(prev => {
+      if (prev.length <= 1) return prev; // keep at least one
+      const copy = [...prev];
+      copy.splice(index,1);
+      return copy;
+    });
+    setCurrentFrame(prev => Math.max(0, Math.min(prev, frames.length - 2)));
+  }
+
+  function blankFrameDataURL(w, h) {
+    const tmp = document.createElement('canvas');
+    tmp.width = w;
+    tmp.height = h;
+    const c = tmp.getContext('2d');
+    c.fillStyle = '#ffffff';
+    c.fillRect(0,0,w,h);
+    return tmp.toDataURL('image/png');
+  }
+
+  function loadFrameToCanvas(dataURL) {
+    const img = new Image();
+    img.onload = () => {
+      const ctx = ctxRef.current;
+      ctx.clearRect(0,0, canvasWidth, canvasHeight);
+      ctx.drawImage(img, 0,0, canvasWidth, canvasHeight);
+      if (onionSkin && frames[currentFrame - 1]) {
+        renderOnionSkin(frames[currentFrame -1]);
+      }
+    };
+    img.src = dataURL;
+  }
+
+  function renderOnionSkin(prevDataURL) {
+    const img = new Image();
+    img.onload = () => {
+      const ctx = ctxRef.current;
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.drawImage(img, 0,0, canvasWidth, canvasHeight);
+      ctx.restore();
+    };
+    img.src = prevDataURL;
+  }
+
+  // export GIF (basic implementation using gif.js if available in the env)
+  async function exportGIF() {
+    // Try to use dynamic import of gif.js.optimized
+    let GIF = null;
+    try {
+      const mod = await import('gif.js.optimized');
+      GIF = mod.default || mod.GIF || mod;
+    } catch (e) {
+      console.warn('gif.js not found. Please install gif.js.optimized (npm i gif.js.optimized)');
+    }
+
+    if (!GIF) {
+      alert('GIF export requires gif.js. Please install gif.js.optimized and refresh.');
+      return;
+    }
+
+    const gif = new GIF({ workers: 2, quality: 10, width: canvasWidth, height: canvasHeight });
+
+    for (let i = 0; i < frames.length; i++) {
+      const img = await loadImage(frames[i]);
+      const tmp = document.createElement('canvas');
+      tmp.width = canvasWidth; tmp.height = canvasHeight;
+      const c = tmp.getContext('2d');
+      c.drawImage(img,0,0,canvasWidth, canvasHeight);
+      gif.addFrame(c, {copy: true, delay: 1000 / fps});
+    }
+
+    gif.on('finished', function(blob) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'animation.gif';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    gif.render();
+  }
+
+  function loadImage(dataURL) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.src = dataURL;
+    });
+  }
+
+  // quick save: write canvas to frames[currentFrame]
+  function quickSave() {
+    const data = canvasRef.current.toDataURL('image/png');
+    setFrames(prev => {
+      const copy = [...prev];
+      copy[currentFrame] = data;
+      return copy;
+    });
+  }
+
+  // initialize with 1 blank frame on first mount
+  useEffect(() => {
+    if (frames.length === 0) {
+      setFrames([blankFrameDataURL(canvasWidth, canvasHeight)]);
+      setCurrentFrame(0);
+    }
+  }, []);
+
+  // helpers: thumbnail rendering
+  function renderThumbnail(dataURL, index) {
+    return (
+      <div key={index} className={`w-20 h-12 border ${index===currentFrame? 'border-blue-500': 'border-gray-300'} rounded overflow-hidden mr-2 cursor-pointer`} onClick={() => setCurrentFrame(index)}>
+        <img src={dataURL} alt={`frame-${index}`} style={{width:'100%', height:'100%', objectFit:'cover'}} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 max-w-5xl mx-auto">
+      <h2 className="text-2xl font-bold mb-3">Animator App — lightweight frame animator</h2>
+      <div className="flex gap-4">
+        <div className="flex-shrink-0">
+          <div className="bg-white rounded shadow p-3">
+            <div className="mb-2">Canvas ({canvasWidth}×{canvasHeight})</div>
+            <div className="border">
+              <canvas
+                ref={canvasRef}
+                className="bg-white touch-none"
+                onMouseDown={startDrawing}
+                onMouseUp={stopDrawing}
+                onMouseOut={stopDrawing}
+                onMouseMove={draw}
+                onTouchStart={startDrawing}
+                onTouchEnd={stopDrawing}
+                onTouchCancel={stopDrawing}
+                onTouchMove={draw}
+                style={{width: canvasWidth/1.5, height: canvasHeight/1.5, display:'block'}}
+              />
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <label className="flex items-center gap-2">Brush
+                <input type="range" min="1" max="40" value={brushSize} onChange={e=>setBrushSize(+e.target.value)} />
+                <span className="text-sm">{brushSize}px</span>
+              </label>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input type="color" value={brushColor} onChange={e=>setBrushColor(e.target.value)} />
+              <button className="px-2 py-1 rounded border" onClick={()=>{ctxRef.current.clearRect(0,0,canvasWidth,canvasHeight); ctxRef.current.fillStyle='#ffffff'; ctxRef.current.fillRect(0,0,canvasWidth,canvasHeight);}}>Clear</button>
+              <button className="px-2 py-1 rounded border" onClick={quickSave}>Save Frame</button>
+            </div>
+            <div className="mt-2 text-sm text-gray-600">Onion skin <input type="checkbox" checked={onionSkin} onChange={e=>setOnionSkin(e.target.checked)} /></div>
+          </div>
+
+          <div className="mt-3 bg-white rounded shadow p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <button className="px-3 py-1 rounded border" onClick={()=>{setPlaying(p=>!p);}}> {playing ? 'Pause' : 'Play'} </button>
+              <button className="px-3 py-1 rounded border" onClick={()=>{setCurrentFrame(0); setPlaying(false);}}>Rewind</button>
+              <div className="ml-2">FPS <input type="number" min="1" max="60" value={fps} onChange={e=>setFps(Number(e.target.value) || 1)} className="w-16 border rounded p-1"/></div>
+            </div>
+            <div className="flex gap-2 items-center">
+              <button className="px-2 py-1 border rounded" onClick={()=>addFrame(currentFrame)}>Add After</button>
+              <button className="px-2 py-1 border rounded" onClick={()=>duplicateFrame(currentFrame)}>Duplicate</button>
+              <button className="px-2 py-1 border rounded" onClick={()=>deleteFrame(currentFrame)}>Delete</button>
+              <button className="px-2 py-1 border rounded" onClick={exportGIF}>Export GIF</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1">
+          <div className="bg-white rounded shadow p-3 mb-3">
+            <div className="text-sm text-gray-600 mb-2">Timeline</div>
+            <div className="flex items-center overflow-x-auto py-2">
+              {frames.map((f, i) => renderThumbnail(f, i))}
+            </div>
+            <div className="mt-3">
+              <div className="mb-1">Selected frame: {currentFrame + 1} / {frames.length}</div>
+              <div className="h-48 border rounded overflow-hidden">
+                {frames[currentFrame] ? <img src={frames[currentFrame]} alt={`selected-${currentFrame}`} style={{width:'100%',height:'100%', objectFit:'contain'}} /> : <div className="text-center text-gray-500 p-6">Blank</div>}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded shadow p-3">
+            <h3 className="font-semibold mb-2">Export & Share</h3>
+            <p className="text-sm text-gray-600 mb-2">Export a GIF (uses gif.js). You can also right-click thumbnails to copy images or use the save button.</p>
+            <div className="flex gap-2">
+              <button className="px-3 py-1 border rounded" onClick={exportGIF}>Export GIF</button>
+              <button className="px-3 py-1 border rounded" onClick={()=>{
+                frames.forEach((f,i)=>{ window.open(f, '_blank'); });
+              }}>Open frames</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
